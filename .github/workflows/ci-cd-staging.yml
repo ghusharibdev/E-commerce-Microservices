@@ -2,7 +2,7 @@ name: CI/CD - Staging
 
 on:
   push:
-    branches: [ 'release/*' ]   # Triggers when you push a release/v1.0 branch
+    branches: [ 'release/*' ]
 
 env:
   NAMESPACE: staging
@@ -11,39 +11,43 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    environment: staging   # Must match the environment name you created
+    environment: staging
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-
       - name: Build and push images
         run: |
           for img in user product order notification frontend; do
             docker build -f Dockerfile.$img -t ${{ secrets.DOCKER_USERNAME }}/$img-service:${{ env.TAG }} .
             docker push ${{ secrets.DOCKER_USERNAME }}/$img-service:${{ env.TAG }}
           done
-
       - name: Create Kubernetes cluster with Kind
         uses: helm/kind-action@v1.8.0
-
       - name: Deploy to Kubernetes
         run: |
           kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n ${{ env.NAMESPACE }} create secret generic app-secrets \
+            --from-literal=jwt-secret=my-secret-key \
+            --dry-run=client -o yaml | kubectl apply -f -
           cd k8s/overlays/staging
-          kustomize edit set image \
-            user-service=${{ secrets.DOCKER_USERNAME }}/user-service:${{ env.TAG }} \
-            product-service=${{ secrets.DOCKER_USERNAME }}/product-service:${{ env.TAG }} \
-            order-service=${{ secrets.DOCKER_USERNAME }}/order-service:${{ env.TAG }} \
-            notification-service=${{ secrets.DOCKER_USERNAME }}/notification-service:${{ env.TAG }} \
-            frontend=${{ secrets.DOCKER_USERNAME }}/frontend:${{ env.TAG }}
-          kustomize build . | kubectl apply -f -
-          kubectl -n ${{ env.NAMESPACE }} wait --for=condition=available --all deployments --timeout=5m
+          kustomize build . | \
+            sed "s|dummy-user|${{ secrets.DOCKER_USERNAME }}/user-service:${{ env.TAG }}|g" | \
+            sed "s|dummy-product|${{ secrets.DOCKER_USERNAME }}/product-service:${{ env.TAG }}|g" | \
+            sed "s|dummy-order|${{ secrets.DOCKER_USERNAME }}/order-service:${{ env.TAG }}|g" | \
+            sed "s|dummy-notification|${{ secrets.DOCKER_USERNAME }}/notification-service:${{ env.TAG }}|g" | \
+            sed "s|dummy-frontend|${{ secrets.DOCKER_USERNAME }}/frontend-service:${{ env.TAG }}|g" | \
+            kubectl apply -f -
+          sleep 10
+          kubectl -n ${{ env.NAMESPACE }} get pods
+          for pod in $(kubectl -n ${{ env.NAMESPACE }} get pods -o jsonpath='{.items[*].metadata.name}'); do
+            echo "=== Logs for $pod ==="
+            kubectl -n ${{ env.NAMESPACE }} logs $pod --tail=30 || true
+          done
+          kubectl -n ${{ env.NAMESPACE }} wait --for=condition=available --all deployments --timeout=3m
