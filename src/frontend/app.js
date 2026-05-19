@@ -6,7 +6,7 @@ const ORDER_SVC = 'http://localhost:3003';
 // Helper to get auth token
 function getToken() {
     return localStorage.getItem('token');
-}
+} 
 
 // Update UI based on login state
 function updateAuthUI() {
