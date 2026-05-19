@@ -37,36 +37,27 @@ jobs:
 
       - name: Deploy to Kubernetes
         run: |
-          # Create namespace
           kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-
-          # Create the required secret (JWT_SECRET for user and order services)
           kubectl -n ${{ env.NAMESPACE }} create secret generic app-secrets \
             --from-literal=jwt-secret=my-secret-key \
             --dry-run=client -o yaml | kubectl apply -f -
 
-          # Apply Kustomize overlay and replace dummy image names with real ones
           cd k8s/overlays/dev
           kustomize build . | \
             sed "s|dummy-user|${{ secrets.DOCKER_USERNAME }}/user-service:${{ env.TAG }}|g" | \
             sed "s|dummy-product|${{ secrets.DOCKER_USERNAME }}/product-service:${{ env.TAG }}|g" | \
             sed "s|dummy-order|${{ secrets.DOCKER_USERNAME }}/order-service:${{ env.TAG }}|g" | \
             sed "s|dummy-notification|${{ secrets.DOCKER_USERNAME }}/notification-service:${{ env.TAG }}|g" | \
-            sed "s|dummy-frontend|${{ secrets.DOCKER_USERNAME }}/frontend:${{ env.TAG }}|g" | \
+            sed "s|dummy-frontend|${{ secrets.DOCKER_USERNAME }}/frontend-service:${{ env.TAG }}|g" | \
             kubectl apply -f -
 
-          # Wait for pods to start
           sleep 10
-
-          # Show pod status
           echo "===== Pods after deployment ====="
           kubectl -n ${{ env.NAMESPACE }} get pods
 
-          # Show logs of any pod (for debugging)
           for pod in $(kubectl -n ${{ env.NAMESPACE }} get pods -o jsonpath='{.items[*].metadata.name}'); do
             echo "=== Logs for $pod ==="
             kubectl -n ${{ env.NAMESPACE }} logs $pod --tail=30 || true
           done
 
-          # Wait for all deployments to be ready (fail if timeout)
           kubectl -n ${{ env.NAMESPACE }} wait --for=condition=available --all deployments --timeout=3m
