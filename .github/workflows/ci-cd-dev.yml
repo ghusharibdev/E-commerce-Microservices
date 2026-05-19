@@ -1,0 +1,58 @@
+name: CI/CD - Development
+
+on:
+  push:
+    branches: [ develop ]
+
+env:
+  NAMESPACE: dev
+  TAG: dev-${{ github.sha }}
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+  KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: development
+    steps:
+      # 1. Checkout your code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Set up Docker Buildx (for building multi-arch images)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 3. Log in to Docker Hub using your stored secrets
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+
+      # 4. Build and push Docker images to Docker Hub
+      - name: Build and push images
+        run: |
+          for img in user product order notification frontend; do
+            docker build -f Dockerfile.$img -t ${{ env.DOCKER_USERNAME }}/$img-service:${{ env.TAG }} .
+            docker push ${{ env.DOCKER_USERNAME }}/$img-service:${{ env.TAG }}
+          done
+
+      # 5. 🔥 THE MAGIC: Create a KIND cluster in the runner
+      - name: Create Kubernetes cluster with Kind
+        uses: helm/kind-action@v1.8.0
+
+      # 6. Deploy to the new Kind cluster using kustomize
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          cd k8s/overlays/dev
+          kustomize edit set image \
+            user-service=${{ env.DOCKER_USERNAME }}/user-service:${{ env.TAG }} \
+            product-service=${{ env.DOCKER_USERNAME }}/product-service:${{ env.TAG }} \
+            order-service=${{ env.DOCKER_USERNAME }}/order-service:${{ env.TAG }} \
+            notification-service=${{ env.DOCKER_USERNAME }}/notification-service:${{ env.TAG }} \
+            frontend=${{ env.DOCKER_USERNAME }}/frontend:${{ env.TAG }}
+          kustomize build . | kubectl apply -f -
+          kubectl -n ${{ env.NAMESPACE }} rollout status deployment --all --timeout=5m
