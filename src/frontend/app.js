@@ -14,12 +14,12 @@ function updateAuthUI() {
     const authStatusDiv = document.getElementById('auth-status');
     const orderSection = document.getElementById('order-section');
     if (token) {
-        authStatusDiv.textContent = '✅ Logged in';
+        authStatusDiv.textContent = "Logged in";
         authStatusDiv.style.background = '#27ae60';
         orderSection.classList.remove('hidden');
         loadProducts(); // refresh products if needed
     } else {
-        authStatusDiv.textContent = '❌ Not logged in';
+        authStatusDiv.textContent = 'Not logged in';
         authStatusDiv.style.background = '#e74c3c';
         orderSection.classList.add('hidden');
     }
