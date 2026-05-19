@@ -55,4 +55,4 @@ jobs:
             notification-service=${{ env.DOCKER_USERNAME }}/notification-service:${{ env.TAG }} \
             frontend=${{ env.DOCKER_USERNAME }}/frontend:${{ env.TAG }}
           kustomize build . | kubectl apply -f -
-          kubectl -n ${{ env.NAMESPACE }} rollout status deployment --all --timeout=5m
+          kubectl -n ${{ env.NAMESPACE }} wait --for=condition=available --all deployments --timeout=5m
