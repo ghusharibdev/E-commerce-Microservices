@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: order-service
-        image: dummy-image-placeholder
+        image: dummy-order
         ports:
         - containerPort: 3003
         env:

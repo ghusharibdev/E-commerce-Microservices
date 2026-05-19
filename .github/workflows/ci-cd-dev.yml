@@ -7,52 +7,66 @@ on:
 env:
   NAMESPACE: dev
   TAG: dev-${{ github.sha }}
-  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-  KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     environment: development
     steps:
-      # 1. Checkout your code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Set up Docker Buildx (for building multi-arch images)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3. Log in to Docker Hub using your stored secrets
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ env.DOCKER_USERNAME }}
-          password: ${{ env.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # 4. Build and push Docker images to Docker Hub
       - name: Build and push images
         run: |
           for img in user product order notification frontend; do
-            docker build -f Dockerfile.$img -t ${{ env.DOCKER_USERNAME }}/$img-service:${{ env.TAG }} .
-            docker push ${{ env.DOCKER_USERNAME }}/$img-service:${{ env.TAG }}
+            docker build -f Dockerfile.$img -t ${{ secrets.DOCKER_USERNAME }}/$img-service:${{ env.TAG }} .
+            docker push ${{ secrets.DOCKER_USERNAME }}/$img-service:${{ env.TAG }}
           done
 
-      # 5. 🔥 THE MAGIC: Create a KIND cluster in the runner
       - name: Create Kubernetes cluster with Kind
         uses: helm/kind-action@v1.8.0
 
-      # 6. Deploy to the new Kind cluster using kustomize
       - name: Deploy to Kubernetes
         run: |
+          # Create namespace
           kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+          # Create the required secret (JWT_SECRET for user and order services)
+          kubectl -n ${{ env.NAMESPACE }} create secret generic app-secrets \
+            --from-literal=jwt-secret=my-secret-key \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          # Apply Kustomize overlay and replace dummy image names with real ones
           cd k8s/overlays/dev
-          kustomize edit set image \
-            user-service=${{ env.DOCKER_USERNAME }}/user-service:${{ env.TAG }} \
-            product-service=${{ env.DOCKER_USERNAME }}/product-service:${{ env.TAG }} \
-            order-service=${{ env.DOCKER_USERNAME }}/order-service:${{ env.TAG }} \
-            notification-service=${{ env.DOCKER_USERNAME }}/notification-service:${{ env.TAG }} \
-            frontend=${{ env.DOCKER_USERNAME }}/frontend:${{ env.TAG }}
-          kustomize build . | kubectl apply -f -
-          kubectl -n ${{ env.NAMESPACE }} wait --for=condition=available --all deployments --timeout=5m
+          kustomize build . | \
+            sed "s|dummy-user|${{ secrets.DOCKER_USERNAME }}/user-service:${{ env.TAG }}|g" | \
+            sed "s|dummy-product|${{ secrets.DOCKER_USERNAME }}/product-service:${{ env.TAG }}|g" | \
+            sed "s|dummy-order|${{ secrets.DOCKER_USERNAME }}/order-service:${{ env.TAG }}|g" | \
+            sed "s|dummy-notification|${{ secrets.DOCKER_USERNAME }}/notification-service:${{ env.TAG }}|g" | \
+            sed "s|dummy-frontend|${{ secrets.DOCKER_USERNAME }}/frontend:${{ env.TAG }}|g" | \
+            kubectl apply -f -
+
+          # Wait for pods to start
+          sleep 10
+
+          # Show pod status
+          echo "===== Pods after deployment ====="
+          kubectl -n ${{ env.NAMESPACE }} get pods
+
+          # Show logs of any pod (for debugging)
+          for pod in $(kubectl -n ${{ env.NAMESPACE }} get pods -o jsonpath='{.items[*].metadata.name}'); do
+            echo "=== Logs for $pod ==="
+            kubectl -n ${{ env.NAMESPACE }} logs $pod --tail=30 || true
+          done
+
+          # Wait for all deployments to be ready (fail if timeout)
+          kubectl -n ${{ env.NAMESPACE }} wait --for=condition=available --all deployments --timeout=3m

@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: user-service
-        image: dummy-image-placeholder  # replaced by kustomize
+        image: dummy-user # replaced by kustomize
         ports:
         - containerPort: 3001
         env:

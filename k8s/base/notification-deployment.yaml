@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: notification-service
-        image: dummy-image-placeholder
+        image: dummy-notification
         ports:
         - containerPort: 3004
 ---
